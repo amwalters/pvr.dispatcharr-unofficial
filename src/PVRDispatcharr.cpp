@@ -1987,8 +1987,32 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
   }
   else
   {
+    RecordingEpgLink epgLink;
+    if (timer.GetTimerType() == kTimerTypeOneTimeEpgBased && timer.GetEPGUid() != EPG_TAG_INVALID_UID)
+    {
+      epgLink = {static_cast<int>(timer.GetClientChannelUid()), timer.GetEPGUid(), timer.GetStartTime(),
+                 timer.GetEndTime()};
+      // Timer start times can be clamped to "now". Retain the original event
+      // window whenever available, using identity rather than title matching.
+      EnsureChannelsLoaded();
+      EnsureEpgLoaded();
+      std::lock_guard<std::mutex> lock(m_dataMutex);
+      const Channel* ch = FindChannelByUid(epgLink.channelId);
+      if (ch)
+      {
+        const auto it = m_epgByChannelNumber.find(std::to_string(ch->channelNumber));
+        if (it != m_epgByChannelNumber.end())
+          for (const auto& entry : it->second)
+            if (ComputeBroadcastId(ch->id, entry.startTime) == epgLink.broadcastId)
+            {
+              epgLink.startTime = entry.startTime;
+              epgLink.endTime = entry.endTime;
+              break;
+            }
+      }
+    }
     ok = m_client.CreateOneTimeRecording(static_cast<int>(timer.GetClientChannelUid()), timer.GetStartTime(),
-                                         timer.GetEndTime(), timer.GetTitle(), error);
+                                         timer.GetEndTime(), timer.GetTitle(), error, epgLink);
   }
 
   if (!ok)
@@ -2127,8 +2151,8 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
       // One-time (manual or EPG-based) recording, not yet started.
       // Deliberately doesn't touch title/custom_properties -- see
       // UpdateOneTimeRecording()'s own comment for why (a real crash risk
-      // on a bare partial PATCH, and this mirrors CreateOneTimeRecording()'s
-      // own choice not to stomp Dispatcharr's auto-enrichment).
+      // on a bare partial PATCH, and metadata replacement could discard
+      // Dispatcharr's enrichment or the original saved EPG identity).
       ok = m_client.UpdateOneTimeRecording(id, timer.GetStartTime(), timer.GetEndTime(), error);
     }
   }

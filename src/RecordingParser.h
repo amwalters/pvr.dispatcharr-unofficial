@@ -30,6 +30,11 @@ namespace dispatcharr
 // ../tests/test_recording_parser.cpp.
 Recording ParseRecordingFields(const nlohmann::json& item, time_t now);
 
+// Used by the HTTP client; does not supply program/title metadata, which would
+// interfere with Dispatcharr's enrichment and padding rules.
+nlohmann::json BuildOneTimeRecordingRequest(int channelId, time_t start, time_t end,
+                                            const RecordingEpgLink& epgLink = {});
+
 // Pure field-mapping core of DispatcharrClient::GetRecordingEdl()'s
 // per-entry loop -- maps a single recording_edl plugin entry onto a
 // RecordingEdlEntry. Returns false (leaving `out` unmodified) for a

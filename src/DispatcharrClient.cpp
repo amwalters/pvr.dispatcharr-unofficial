@@ -886,9 +886,8 @@ Recording DispatcharrClient::ParseRecordingJson(const json& item, time_t now)
   Recording r = dispatcharr::ParseRecordingFields(item, now);
   if (r.title.empty())
   {
-    // See PendingTitle's comment on why this can be filled in before
-    // Dispatcharr's own async enrichment has caught up, and why it's
-    // matched by channel alone rather than also start time.
+    // Bridge the asynchronous server enrichment using the exact returned
+    // recording id; two overlapping recordings on one channel stay distinct.
     std::lock_guard<std::mutex> lock(m_pendingTitlesMutex);
     constexpr auto kPendingTitleTtl = std::chrono::minutes(3);
     auto now = std::chrono::steady_clock::now();
@@ -904,14 +903,17 @@ Recording DispatcharrClient::ParseRecordingJson(const json& item, time_t now)
     const PendingTitle* latest = nullptr;
     for (const auto& pending : m_pendingTitles)
     {
-      if (pending.channelId == r.channelId && (!latest || pending.insertedAt > latest->insertedAt))
+      if (pending.recordingId == r.id && (!latest || pending.insertedAt > latest->insertedAt))
         latest = &pending;
     }
     if (latest)
       r.title = latest->title;
   }
   if (r.title.empty())
+  {
     r.title = "Recording " + std::to_string(r.id);
+    r.titleIsPlaceholder = true;
+  }
   return r;
 }
 
@@ -1045,26 +1047,17 @@ bool DispatcharrClient::GetTimerRules(std::vector<TimerRule>& out, std::string& 
 }
 
 bool DispatcharrClient::CreateOneTimeRecording(int channelId, time_t start, time_t end, const std::string& title,
-                                               std::string& error)
+                                               std::string& error, const RecordingEpgLink& epgLink)
 {
   if (!EnsureAuthenticated(error))
     return false;
 
-  // Confirmed against a real recording: channel/start_time/end_time are the
-  // only fields this needs to send. Deliberately NOT sending its own
-  // custom_properties (e.g. {"title": title}) -- confirmed that Dispatcharr
-  // auto-populates custom_properties.program.{title,sub_title,description}
-  // (plus status/file paths/poster logo) from whatever EPG programme was
-  // actually airing on this channel at this time, and sending an explicit
-  // custom_properties on create *replaces* that entirely rather than
-  // merging, which would throw away the richer data for what's normally an
-  // exact match anyway (Kodi's "record from guide" title already came from
-  // that same EPG programme).
-  json body = {
-      {"channel", channelId},
-      {"start_time", IsoFromTime(start)},
-      {"end_time", IsoFromTime(end)},
-  };
+  // Supply only a namespaced identity on creation, never program/title or a
+  // later metadata PATCH. Dispatcharr's recording task enriches an absent
+  // program dict and preserves unrelated custom properties. Supplying our own
+  // program title would prevent that enrichment; supplying program itself
+  // would also change the serializer's pre/post-padding behavior.
+  json body = BuildOneTimeRecordingRequest(channelId, start, end, epgLink);
   json response;
   if (!Request("POST", kRecordingsPath, body, response, error))
     return false;
@@ -1074,10 +1067,11 @@ bool DispatcharrClient::CreateOneTimeRecording(int channelId, time_t start, time
   // show it immediately instead of "Recording <id>" while Dispatcharr's own
   // async enrichment catches up. Only useful for the EPG-matched case --
   // title is empty for a fully manual time range with nothing airing.
-  if (!title.empty())
+  const int recordingId = FieldOr(response, "id", 0);
+  if (!title.empty() && recordingId > 0)
   {
     std::lock_guard<std::mutex> lock(m_pendingTitlesMutex);
-    m_pendingTitles.push_back({channelId, title, std::chrono::steady_clock::now()});
+    m_pendingTitles.push_back({recordingId, title, std::chrono::steady_clock::now()});
   }
   return true;
 }

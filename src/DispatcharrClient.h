@@ -128,6 +128,16 @@ struct ChannelGroup
   std::string name;
 };
 
+// Scoped to this addon's channel/EPG UID scheme. Other clients' stored Kodi
+// identifiers must not be reused: they can use different channel numbering.
+struct RecordingEpgLink
+{
+  int channelId = 0;
+  uint32_t broadcastId = 0;
+  time_t startTime = 0;
+  time_t endTime = 0;
+};
+
 struct Recording
 {
   int id = 0;
@@ -139,6 +149,13 @@ struct Recording
   std::string title;
   std::string subtitle;
   std::string description;
+  std::string iconPath;
+  bool titleIsPlaceholder = false;
+  RecordingEpgLink epgLink;
+  // Dispatcharr sometimes retains the original programme window separately
+  // from the padded/clamped recording window (e.g. series recordings).
+  time_t programStartTime = 0;
+  time_t programEndTime = 0;
   time_t startTime = 0;
   time_t endTime = 0;
   int durationSeconds = 0;
@@ -448,14 +465,14 @@ public:
   bool GenerateApiKey(std::string& keyOut, std::string& error);
 
   bool GetTimerRules(std::vector<TimerRule>& out, std::string& error);
-  // title is used only as a client-side placeholder (see GetRecordings()'s
-  // pending-title cache) -- not sent to Dispatcharr itself; see the .cpp for
-  // why.
-  bool CreateOneTimeRecording(int channelId, time_t start, time_t end, const std::string& title, std::string& error);
+  // Keep programme enrichment server-owned. Only our namespaced EPG identity
+  // is sent alongside the recording's channel/time fields.
+  bool CreateOneTimeRecording(int channelId, time_t start, time_t end, const std::string& title, std::string& error,
+                              const RecordingEpgLink& epgLink = {});
   // Reschedules an existing one-time recording's start/end time via
   // PATCH /api/channels/recordings/{id}/. Deliberately sends ONLY
-  // start_time/end_time, mirroring CreateOneTimeRecording()'s own choice
-  // not to touch custom_properties -- confirmed two things live against a
+  // start_time/end_time, preserving all existing custom_properties --
+  // confirmed two things live against a
   // real EPG-matched recording before relying on either: (1) a PATCH
   // that omits both times crashes with an uncaught 500 (Dispatcharr's own
   // RecordingSerializer.validate() does `end_time < now` with end_time
@@ -1180,34 +1197,12 @@ private:
   // corrupting the cumulative offsets that follow.
   int64_t ProbeSegmentByteSize(const std::string& segmentUrl) const;
 
-  // Client-side placeholder for a just-created one-time recording's title,
-  // matched by channelId (not also start time -- see below) to whatever
-  // this addon was called with in CreateOneTimeRecording(). Dispatcharr
-  // only learns a recording's real title asynchronously (custom_properties.
-  // program.title, populated a moment after the recording actually starts,
-  // see GetRecordings()), but Kodi already told AddTimer() the correct
-  // EPG-derived title *before* this client ever calls Dispatcharr --
-  // CreateFromEpg() reads it from the EPG tag the user clicked "Record" on.
-  // Caching that and using it in GetRecordings() in place of the
-  // "Recording <id>" fallback means the correct title shows immediately,
-  // without needing to wait for Dispatcharr's enrichment or a later refresh
-  // to catch up at all, for the common EPG-matched case.
-  // Deliberately NOT also matched on start time: confirmed against a real
-  // recording of an already-airing EPG event that Dispatcharr silently
-  // clamps the stored start_time to the moment it actually began recording
-  // (e.g. "now"), not the EPG programme's own start time this addon sent --
-  // exact-time matching missed every such case, which is the single most
-  // common one ("Record" on something currently on). Matching by channel
-  // alone (picking the most recently inserted match, left in place rather
-  // than erased -- see GetRecordings()'s own comment for why erasing on
-  // match would make the title flicker) is good enough for what this is:
-  // a short-lived, best-effort bridge, not an authoritative mapping.
-  // Entries expire after a few minutes regardless
-  // (pruned in GetRecordings()) since Dispatcharr's own enrichment should
-  // have long since caught up by then, and to avoid an unbounded cache.
+  // Short-lived display title until Dispatcharr enriches a new recording.
+  // Keyed by the returned recording id so simultaneous timers on the same
+  // channel cannot borrow each other's titles. Never used across restarts.
   struct PendingTitle
   {
-    int channelId = 0;
+    int recordingId = 0;
     std::string title;
     std::chrono::steady_clock::time_point insertedAt;
   };

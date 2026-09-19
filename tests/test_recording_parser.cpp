@@ -162,6 +162,59 @@ TEST_CASE("ParseRecordingFields sets recurringRuleId only for a rule of type rec
   CHECK(ParseRecordingFields(absent, 0).recurringRuleId == 0);
 }
 
+TEST_CASE("Recording poster is available without any programme metadata", "[RecordingParser]")
+{
+  json item = {{"custom_properties", {{"poster_url", "https://example.invalid/poster.jpg"}}}};
+  CHECK(ParseRecordingFields(item, 0).iconPath == "https://example.invalid/poster.jpg");
+  item["custom_properties"]["poster_url"] = nullptr;
+  CHECK(ParseRecordingFields(item, 0).iconPath.empty());
+}
+
+TEST_CASE("Recording creation preserves server-owned programme enrichment", "[RecordingParser]")
+{
+  const auto manual = BuildOneTimeRecordingRequest(7, kStart, kEnd);
+  CHECK_FALSE(manual.contains("custom_properties"));
+  const auto guide = BuildOneTimeRecordingRequest(7, kStart, kEnd, {7, 1234, kStart, kEnd});
+  CHECK(guide["channel"] == 7);
+  CHECK(guide["start_time"] == "2026-01-01T00:00:00Z");
+  CHECK(guide["end_time"] == "2026-01-01T01:00:00Z");
+  const auto& custom = guide["custom_properties"];
+  CHECK_FALSE(custom.contains("program"));
+  CHECK_FALSE(custom.contains("title"));
+  CHECK(custom["pvr_dispatcharr_unofficial"]["broadcast_id"] == 1234);
+  CHECK_FALSE(BuildOneTimeRecordingRequest(7, kStart, kEnd, {8, 1234, kStart, kEnd}).contains("custom_properties"));
+  CHECK_FALSE(
+      BuildOneTimeRecordingRequest(7, kStart, kEnd, {7, 1234, kEnd, kEnd + 3600}).contains("custom_properties"));
+}
+
+TEST_CASE("Recording parser ignores other clients' EPG identifiers", "[RecordingParser]")
+{
+  json item = {{"channel", 7}, {"custom_properties", {{"kodi_epg_uid", "1234"}, {"kodi_channel_uid", "7"}}}};
+  CHECK(ParseRecordingFields(item, 0).epgLink.broadcastId == 0);
+}
+
+TEST_CASE("Malformed and unsupported saved EPG identities are ignored", "[RecordingParser]")
+{
+  const auto valid = BuildOneTimeRecordingRequest(7, kStart, kEnd, {7, 1234, kStart, kEnd});
+  for (const json uid : {json(nullptr), json("bad"), json(-1), json(0), json(4294967296ULL), json(1.5)})
+  {
+    auto item = valid;
+    item["custom_properties"]["pvr_dispatcharr_unofficial"]["broadcast_id"] = uid;
+    CHECK(ParseRecordingFields(item, 0).epgLink.broadcastId == 0);
+  }
+  auto item = valid;
+  item["custom_properties"]["pvr_dispatcharr_unofficial"]["version"] = 2;
+  CHECK(ParseRecordingFields(item, 0).epgLink.broadcastId == 0);
+  item["custom_properties"]["pvr_dispatcharr_unofficial"]["version"] = 1.5;
+  CHECK(ParseRecordingFields(item, 0).epgLink.broadcastId == 0);
+  item = valid;
+  item["custom_properties"]["pvr_dispatcharr_unofficial"]["channel_id"] = 4294967303ULL;
+  CHECK(ParseRecordingFields(item, 0).epgLink.broadcastId == 0);
+  item = valid;
+  item["custom_properties"]["pvr_dispatcharr_unofficial"]["broadcast_id"] = 4294967295ULL;
+  CHECK(ParseRecordingFields(item, 0).epgLink.broadcastId == 4294967295U);
+}
+
 // ---------------------------------------------------------------------
 // ParseRecordingEdlEntryJson
 // ---------------------------------------------------------------------

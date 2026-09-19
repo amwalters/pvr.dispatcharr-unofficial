@@ -1,6 +1,7 @@
 #include "PVRDispatcharr.h"
 
 #include "ChannelGroupFilter.h"
+#include "EpgRecordingMatch.h"
 #include "EpgTagUtil.h"
 #include "RealtimeUpdateParser.h"
 #include "RecurringRuleRenewal.h"
@@ -839,6 +840,22 @@ const Channel* PVRDispatcharr::FindChannelByUid(int uid) const
   return nullptr;
 }
 
+const EpgEntry* PVRDispatcharr::FindRecordingEpgEntryLocked(const Recording& recording) const
+{
+  if (recording.channelId <= 0)
+    return nullptr;
+
+  const Channel* ch = FindChannelByUid(recording.channelId);
+  if (!ch || ch->channelNumber <= 0)
+    return nullptr;
+
+  const auto it = m_epgByChannelNumber.find(std::to_string(ch->channelNumber));
+  if (it == m_epgByChannelNumber.end())
+    return nullptr;
+
+  return MatchRecordingToEpg(it->second, recording);
+}
+
 // ---------------------------------------------------------------------
 // Channel groups
 // ---------------------------------------------------------------------
@@ -1458,6 +1475,12 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
   if (deleted)
     return PVR_ERROR_NO_ERROR;
 
+  // EPG/channel caches are best-effort here: recordings remain fully usable
+  // if either fetch fails, but when available they let Kodi associate each
+  // recording with its exact guide event (recorded marker + "Play recording"
+  // from the guide) and reuse the programme artwork.
+  EnsureChannelsLoaded();
+  EnsureEpgLoaded();
   EnsureRecordingsLoaded();
   std::lock_guard<std::mutex> lock(m_dataMutex);
   for (const auto& rec : m_cachedRecordings)
@@ -1491,6 +1514,23 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
     recording.SetDuration(rec.durationSeconds);
     recording.SetSizeInBytes(rec.bytesWritten);
     recording.SetIsDeleted(false);
+
+    const EpgEntry* epgEntry = FindRecordingEpgEntryLocked(rec);
+    const unsigned int epgUid = RecordingEpgUid(rec, epgEntry);
+    if (epgUid != EPG_TAG_INVALID_UID)
+      recording.SetEPGEventId(epgUid);
+
+    // Saved recording art survives guide expiry and recording-title edits.
+    const std::string icon = !rec.iconPath.empty() ? rec.iconPath : epgEntry ? epgEntry->iconPath : "";
+    if (!icon.empty())
+    {
+      recording.SetIconPath(icon);
+      recording.SetThumbnailPath(icon);
+      recording.SetFanartPath(icon);
+    }
+    if (m_debugLogging)
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: recording %d channel %d EPG uid %u (guide match: %s)",
+                rec.id, rec.channelId, epgUid, epgEntry ? "yes" : "no");
     results.Add(recording);
   }
   return PVR_ERROR_NO_ERROR;
@@ -1755,8 +1795,9 @@ PVR_ERROR PVRDispatcharr::GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& 
   // code needed to change for it to work.
   kodi::addon::PVRTimerType oneTimeEpg;
   oneTimeEpg.SetId(kTimerTypeOneTimeEpgBased);
-  oneTimeEpg.SetAttributes(PVR_TIMER_TYPE_SUPPORTS_CHANNELS | PVR_TIMER_TYPE_SUPPORTS_START_TIME |
-                           PVR_TIMER_TYPE_SUPPORTS_END_TIME | PVR_TIMER_TYPE_SUPPORTS_TITLE_EPG_MATCH);
+  oneTimeEpg.SetAttributes(PVR_TIMER_TYPE_REQUIRES_EPG_TAG_ON_CREATE | PVR_TIMER_TYPE_SUPPORTS_CHANNELS |
+                           PVR_TIMER_TYPE_SUPPORTS_START_TIME | PVR_TIMER_TYPE_SUPPORTS_END_TIME |
+                           PVR_TIMER_TYPE_SUPPORTS_TITLE_EPG_MATCH);
   oneTimeEpg.SetDescription("One-time recording (from guide)");
   types.push_back(oneTimeEpg);
 
@@ -1806,6 +1847,8 @@ PVR_ERROR PVRDispatcharr::GetTimersAmount(int& amount)
 
 PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
 {
+  EnsureChannelsLoaded();
+  EnsureEpgLoaded();
   EnsureRecordingsLoaded();
   EnsureTimerRulesLoaded();
   // Copied out under the lock, then processed lock-free below -- this
@@ -1815,11 +1858,20 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
   std::vector<Recording> recordings;
   std::vector<TimerRule> rules;
   std::vector<RecurringRule> recurringRules;
+  std::vector<unsigned int> recordingEpgUids;
   {
     std::lock_guard<std::mutex> lock(m_dataMutex);
     recordings = m_cachedRecordings;
     rules = m_cachedTimerRules;
     recurringRules = m_cachedRecurringRules;
+
+    recordingEpgUids.reserve(recordings.size());
+    for (const auto& rec : recordings)
+    {
+      const EpgEntry* epgEntry = FindRecordingEpgEntryLocked(rec);
+      const unsigned int epgUid = RecordingEpgUid(rec, epgEntry);
+      recordingEpgUids.push_back(epgUid);
+    }
   }
 
   // Series rules have no numeric id at all in Dispatcharr's API (confirmed
@@ -1849,7 +1901,19 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
       continue;
     kodi::addon::PVRTimer timer;
     timer.SetClientIndex(static_cast<unsigned int>(rec.id));
-    timer.SetTimerType(kTimerTypeOneTime);
+    const unsigned int epgUid = recordingEpgUids[recIdx];
+    if (epgUid != EPG_TAG_INVALID_UID)
+    {
+      // Explicit EPG identity is more reliable than Kodi's fallback
+      // channel/time containment test when Dispatcharr has applied DVR
+      // padding or clamped an already-airing recording's start to "now".
+      timer.SetTimerType(kTimerTypeOneTimeEpgBased);
+      timer.SetEPGUid(epgUid);
+    }
+    else
+    {
+      timer.SetTimerType(kTimerTypeOneTime);
+    }
     timer.SetTitle(rec.title);
     timer.SetClientChannelUid(rec.channelId);
     timer.SetStartTime(rec.startTime);

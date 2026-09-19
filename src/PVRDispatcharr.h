@@ -272,6 +272,10 @@ private:
   bool EnsureRecordingsLoaded();
   bool EnsureTimerRulesLoaded();
   const dispatcharr::Channel* FindChannelByUid(int uid) const;
+  // Caller must hold m_dataMutex. Resolves the recording's Dispatcharr
+  // channel id to that channel's XMLTV programme list, then applies the
+  // padding/clamped-start tolerant matcher in EpgRecordingMatch.cpp.
+  const dispatcharr::EpgEntry* FindRecordingEpgEntryLocked(const dispatcharr::Recording& recording) const;
   // Looks up one recording by id -- shared by
   // GetRecordingStreamProperties()/OpenRecordedStream() (both need a
   // recording's isInProgress/hlsDirStillPresent flags right before

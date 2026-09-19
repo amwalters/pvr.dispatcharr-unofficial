@@ -61,6 +61,7 @@ set(DISPATCHARR_SOURCES
     src/WebSocketClient.cpp
     src/TimeZoneUtil.cpp
     src/EpgTagUtil.cpp
+    src/EpgRecordingMatch.cpp
     src/StringUtil.cpp
     src/DateTimeFormat.cpp
     src/UrlEncode.cpp
@@ -87,6 +88,7 @@ set(DISPATCHARR_HEADERS
     src/TimeUtil.h
     src/TimeZoneUtil.h
     src/EpgTagUtil.h
+    src/EpgRecordingMatch.h
     src/StringUtil.h
     src/CurlCallbacks.h
     src/CatchUpUtil.h

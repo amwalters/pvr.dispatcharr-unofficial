@@ -56,6 +56,7 @@ add_executable(pvr_dispatcharr_tests
   test_xmltv_parser.cpp
   test_timezone_util.cpp
   test_epg_tag_util.cpp
+  test_epg_recording_match.cpp
   test_string_util.cpp
   test_date_time_format.cpp
   test_url_encode.cpp
@@ -83,6 +84,7 @@ add_executable(pvr_dispatcharr_tests
   ${DISPATCHARR_SRC_DIR}/XmlTvParser.cpp
   ${DISPATCHARR_SRC_DIR}/TimeZoneUtil.cpp
   ${DISPATCHARR_SRC_DIR}/EpgTagUtil.cpp
+  ${DISPATCHARR_SRC_DIR}/EpgRecordingMatch.cpp
   ${DISPATCHARR_SRC_DIR}/StringUtil.cpp
   ${DISPATCHARR_SRC_DIR}/DateTimeFormat.cpp
   ${DISPATCHARR_SRC_DIR}/UrlEncode.cpp

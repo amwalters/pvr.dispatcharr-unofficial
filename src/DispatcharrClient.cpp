@@ -483,7 +483,7 @@ bool DispatcharrClient::GetChannelGroups(std::vector<ChannelGroup>& out, std::st
   return true;
 }
 
-bool DispatcharrClient::GetXmlTvGuide(std::string& xmlOut, std::string& error)
+bool DispatcharrClient::GetXmlTvGuide(std::string& xmlOut, std::string& error, int pastDays)
 {
   if (!EnsureAuthenticated(error))
     return false;
@@ -496,7 +496,9 @@ bool DispatcharrClient::GetXmlTvGuide(std::string& xmlOut, std::string& error)
     error = "Failed to initialise libcurl";
     return false;
   }
-  std::string url = BaseUrl() + kEpgOutputPath;
+  // The default export drops finished programmes. Kodi can still have those
+  // events in its own database, so keep history for recording association.
+  std::string url = BaseUrl() + kEpgOutputPath + "?prev_days=" + std::to_string(std::clamp(pastDays, 0, 30));
   xmlOut.clear();
   curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);

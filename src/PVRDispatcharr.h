@@ -94,6 +94,7 @@ public:
   PVR_ERROR GetStreamReadChunkSize(int& chunksize) override;
 
   // --- EPG ---
+  PVR_ERROR SetEPGMaxPastDays(int pastDays) override;
   PVR_ERROR GetEPGForChannel(int channelUid, time_t start, time_t end,
                              kodi::addon::PVREPGTagsResultSet& results) override;
   // "Play from guide" for a past/currently-airing programme, backed by
@@ -352,6 +353,7 @@ private:
   // invariant that needs a single consistent snapshot.
   std::atomic<int> m_channelRefreshHours{12};
   std::atomic<int> m_epgRefreshHours{4};
+  std::atomic<int> m_epgPastDays{7};
   // 0 = off, 1 = local (inputstream.ffmpegdirect's own on-device buffer,
   // no Dispatcharr-side cooperation needed), 2 = server-side (this addon's
   // companion Dispatcharr plugin -- see dispatcharr-plugin/timeshift_buffer/

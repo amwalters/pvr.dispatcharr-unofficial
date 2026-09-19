@@ -74,6 +74,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
 {
   m_channelRefreshHours = kodi::addon::GetSettingInt("channel_refresh_hours", 12);
   m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
+  m_epgPastDays = std::clamp(EpgMaxPastDays(), 7, 30);
   m_liveTimeshiftMode = kodi::addon::GetSettingInt("live_timeshift_mode", kLiveTimeshiftOff);
   m_enableCatchupFfmpegdirectSeek = kodi::addon::GetSettingBoolean("enable_catchup_ffmpegdirect_seek", false);
   m_recordingRefreshMinutes = kodi::addon::GetSettingInt("recording_refresh_minutes", 5);
@@ -518,6 +519,10 @@ void PVRDispatcharr::StartChannelEpgRefreshThread()
             }
             for (int uid : channelUids)
               TriggerEpgUpdate(static_cast<unsigned int>(uid));
+            // A refreshed guide can now resolve a previously unmatched
+            // recording or timer; publish those associations to Kodi too.
+            InvalidateAndTriggerRecordingUpdate();
+            InvalidateAndTriggerTimerUpdate();
           }
 
           std::unique_lock<std::mutex> lock(m_channelEpgRefreshMutex);
@@ -752,13 +757,15 @@ bool PVRDispatcharr::EnsureChannelsLoaded()
 bool PVRDispatcharr::EnsureEpgLoaded()
 {
   auto now = std::chrono::steady_clock::now();
-  bool stale =
-      m_epgLoadedAt.time_since_epoch().count() == 0 || now - m_epgLoadedAt > std::chrono::hours(m_epgRefreshHours);
-  if (!stale)
-    return false;
+  {
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    if (m_epgLoadedAt.time_since_epoch().count() != 0 && now - m_epgLoadedAt <= std::chrono::hours(m_epgRefreshHours))
+      return false;
+  }
 
   std::string xml, error;
-  if (!m_client.GetXmlTvGuide(xml, error))
+  const int pastDays = m_epgPastDays;
+  if (!m_client.GetXmlTvGuide(xml, error, pastDays))
   {
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to fetch XMLTV guide: %s", error.c_str());
     return false;
@@ -773,7 +780,8 @@ bool PVRDispatcharr::EnsureEpgLoaded()
 
   std::lock_guard<std::mutex> lock(m_dataMutex);
   m_epgByChannelNumber = std::move(parsed);
-  m_epgLoadedAt = now;
+  // A simultaneous change to Kodi's history window needs another fetch.
+  m_epgLoadedAt = pastDays == m_epgPastDays ? now : std::chrono::steady_clock::time_point{};
   return true;
 }
 
@@ -1192,6 +1200,15 @@ PVR_ERROR PVRDispatcharr::GetStreamReadChunkSize(int& chunksize)
 // ---------------------------------------------------------------------
 // EPG
 // ---------------------------------------------------------------------
+
+PVR_ERROR PVRDispatcharr::SetEPGMaxPastDays(int pastDays)
+{
+  const int days = std::clamp(pastDays, 7, 30);
+  std::lock_guard<std::mutex> lock(m_dataMutex);
+  if (m_epgPastDays.exchange(days) != days)
+    m_epgLoadedAt = {};
+  return PVR_ERROR_NO_ERROR;
+}
 
 PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid, time_t start, time_t end,
                                            kodi::addon::PVREPGTagsResultSet& results)

@@ -1,5 +1,39 @@
 *(part of the pvr.dispatcharr-unofficial notes -- see [API_NOTES.md](API_NOTES.md) for the index)*
 
+## Recording links to the guide
+
+The addon requests at least seven days of XMLTV history, increasing to Kodi's
+configured past-guide window up to Dispatcharr's 30-day limit. The server must
+still retain those programmes. The plain `/output/epg` default excludes finished
+programmes, even while Kodi may still display them from its own EPG database.
+
+New guide recordings retain a versioned `pvr_dispatcharr_unofficial` object in
+`custom_properties`, containing this addon's channel ID, broadcast ID and original
+event window. No `program`, title, artwork or file-path fields are supplied on
+creation, and existing recording metadata is never patched just to add a link.
+In the inspected Dispatcharr source, enrichment populates an absent programme
+and preserves unrelated custom properties; this also leaves its existing
+padding behavior unchanged. Live server validation of this new path is pending.
+
+Both recordings and timers prefer that identity when the channel and time
+window still agree. Existing recordings can also use original programme times
+when Dispatcharr identifies the programme, or match by title and overlapping
+time in the historical guide. Links from other plugins are not imported because
+their Kodi channel and broadcast IDs may use another scheme. An old recording
+with neither saved identity nor available guide data cannot always be linked.
+
+Display placeholders such as `Recording 42` are excluded from title matching.
+Equally plausible repeat airings are left unmatched. ISO timestamps honor UTC
+offsets, including those in programme metadata. Saved `poster_url` artwork is
+used independently of EPG matching, with guide artwork as a fallback. Existing
+per-show recording folders are preserved.
+
+Regression tests cover creation/readback, a restart with an empty guide, late
+recording starts, renamed recordings, expired and historical guide data, stale
+or malformed identities, ambiguous repeats, and timezone offsets. Debug logging
+reports the recording ID, channel ID, chosen EPG UID and whether a guide entry
+was found. A real Kodi/Dispatcharr recording and playback check is still needed.
+
 # Recordings/timers: confirmed end-to-end against real data
 
 Once the account's permissions were raised (see the permissions note
@@ -17,8 +51,9 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   comparing a recording created with an explicit `custom_properties.title`
   (which got exactly that flat object back, nothing else) against one
   created with none (which got the full auto-populated object above).
-  `CreateOneTimeRecording()` no longer sends its own `custom_properties`
-  as a result, and `GetRecordings()` reads the nested `program.*` fields
+  At that point `CreateOneTimeRecording()` stopped supplying custom properties;
+  it now sends only the isolated EPG identity described above. It still leaves
+  `program` and flat title fields to Dispatcharr. `GetRecordings()` reads the nested `program.*` fields
   first, falling back to flat `custom_properties.title` etc. for anything
   that did set them directly.
   **Confirmed (this was previously flagged unconfirmed in
@@ -2130,4 +2165,3 @@ implementable items (rename, file size, extending an in-progress
 recording) have since been implemented and confirmed live (see the
 "Update" paragraphs above). See `docs/OPEN_ITEMS.md` for the tracked
 history.
-

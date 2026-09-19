@@ -273,7 +273,7 @@ public:
 
   // Full-body caller must fetch and parse this with XmlTvParser; this
   // client only returns the raw document.
-  bool GetXmlTvGuide(std::string& xmlOut, std::string& error);
+  bool GetXmlTvGuide(std::string& xmlOut, std::string& error, int pastDays = 7);
 
   // Plain live-stream URL passthrough for live_timeshift_mode's "Off"
   // setting -- no server-side buffering, no admin-account requirement.

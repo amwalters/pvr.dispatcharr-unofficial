@@ -16,10 +16,29 @@ TEST_CASE("TimeFromIso parses Dispatcharr's Z-suffixed format", "[DateTimeFormat
   CHECK(TimeFromIso("2026-06-15T12:30:45Z") == 1781526645);
 }
 
-TEST_CASE("TimeFromIso ignores a trailing offset/fractional part", "[DateTimeFormat]")
+TEST_CASE("TimeFromIso accepts zero offsets and fractional seconds", "[DateTimeFormat]")
 {
   CHECK(TimeFromIso("2026-01-01T00:00:00+00:00") == 1767225600);
   CHECK(TimeFromIso("2026-01-01T00:00:00.123456Z") == 1767225600);
+}
+
+TEST_CASE("TimeFromIso normalizes programme metadata offsets to UTC", "[DateTimeFormat]")
+{
+  CHECK(TimeFromIso("2026-01-01T11:00:00+11:00") == 1767225600);
+  CHECK(TimeFromIso("2025-12-31T19:00:00-05:00") == 1767225600);
+  CHECK(TimeFromIso("2026-01-01T05:30:00.123456+0530") == 1767225600);
+  CHECK(TimeFromIso("2026-01-01T00:00:00") == 1767225600);
+}
+
+TEST_CASE("TimeFromIso rejects invalid dates and offset suffixes", "[DateTimeFormat]")
+{
+  CHECK(TimeFromIso("2026-02-30T00:00:00Z") == 0);
+  CHECK(TimeFromIso("2026-01-01T25:00:00Z") == 0);
+  CHECK(TimeFromIso("2026-01-01T00:00:00+24:00") == 0);
+  CHECK(TimeFromIso("2026-01-01T00:00:00+01:60") == 0);
+  CHECK(TimeFromIso("2026-01-01T00:00:00junk") == 0);
+  CHECK(TimeFromIso("2026-01-01T00:00:00+0x00") == 0);
+  CHECK(TimeFromIso("2026-01-01T00:00:00.Z") == 0);
 }
 
 TEST_CASE("TimeFromIso returns 0 for unparseable input", "[DateTimeFormat]")

@@ -10,11 +10,10 @@ namespace dispatcharr
 // UTC-normalized date-time fields.
 std::string IsoFromTime(time_t t);
 
-// Parses the "YYYY-MM-DDTHH:MM:SS" prefix of a Dispatcharr date-time
-// field (e.g. "2026-08-30T10:55:01Z" or "...+00:00"); any trailing
-// fractional seconds/offset is ignored, consistent with every timestamp
-// elsewhere in this API being UTC-normalized already (see IsoFromTime()
-// above). Returns 0 on anything unparseable.
+// Parses an ISO date-time, honoring Z or a numeric UTC offset (with or
+// without a colon). Fractional seconds are discarded; absent zones mean
+// UTC. Programme metadata can use a different offset from recording fields.
+// Returns 0 on invalid input.
 time_t TimeFromIso(const std::string& isoStr);
 
 // "HH:MM:SS" for a plain seconds-since-midnight value, wrapping into
